@@ -9,31 +9,52 @@ use ReflectionClass;
 use ReflectionException;
 use ReflectionMethod;
 use ReflectionNamedType;
+use Ledgerly\Kernel\Container;
+use Ledgerly\Exception\ContainerException;
+use ReflectionParameter;
+use ReflectionUnionType;
+
 
 class Router
 {
     public string $valueUriParam = "";
+    private array $routes = [];
 
-    public function __construct()
+    public function __construct(public Container $container)
     {
         $this->getAttributesFromReflection();
+        $this->dispatch();
     }
 
-    protected function getAttributesFromReflection(): void
+    protected function getAttributesFromReflection()
     {
         // Itera tutti i metodi esposti dalla classe
         foreach ($this->setReflectionClass()->getMethods() as $method) {
             // Itera tutti i valori restituiti dagli attributi associati ai metodi
             foreach ($method->getAttributes(Route::class) as $params) {
                 // crea instanza e restituisce tutti i valori degli attributi
-                $route = $params->newInstance();
-                
-                if ($this->uri() === $route->path) {
-                    $this->getMethodWithoutParams($method->name);
-                } else {
-                   $this->getMethodWithParams($route->path, $method->getName());
-                } 
+                $this->routes[] = ['route' => $params->newInstance(), 'methodName' => $method->name];
             }
+        }
+ 
+        return $this->routes;
+    }
+
+    protected function dispatch()
+    {
+        for ($i = 0; $i < count($this->routes); $i++) {
+            if ($this->uri() === $this->routes[$i]['route']->path) {
+                return $this->getMethodWithoutParams($this->routes[$i]['methodName']);
+            } 
+        }
+
+        for ($i = 0; $i < count($this->routes); $i++) {
+            $pathRoute = $this->getMethodWithParams($this->routes[$i]['route']->path, $this->routes[$i]['methodName']);
+            
+            if (isset($pathRoute['path']) && $this->uri() === $pathRoute['path']) {
+                $this->invokeMethodWithArguments($pathRoute['param'], $this->routes[$i]['methodName']);
+            }
+            
         }
     }
 
@@ -61,19 +82,21 @@ class Router
         return new ReflectionClass($refClass);
     }
 
-    protected function getMethodWithoutParams(string $method): void
+    protected function getMethodWithoutParams(string $method)
     {
         // crea una nuova istanza di reflection
-        $instance = $this->setReflectionClass()->newInstance();
+        $instance = $this->container->get($this->getClassName());
+      
         // ottiene il metodo che si lega al path
         $obj = $this->setReflectionClass()->getMethod($method);
         $obj->invoke($instance);
     }
 
-    protected function getMethodWithParams(string $route, string $method): void
+    protected function getMethodWithParams(string $route, string $method)
     {
         try {
-             $firstSegment =  explode("/", $this->uri());
+            $firstSegment =  explode("/", $this->uri());
+    
             // Regex per verificare se nel path della rotta c'è un valore
             // espresso all'interno di graffe che sta ad indicare un parametro
             $pattern = "/\{[a-z]*\}/";
@@ -81,24 +104,24 @@ class Router
             if (preg_match($pattern, $route, $matches)) {
                 // ottiene il valore tra graffe e rimuove le graffe
                 $stripRoutePath = explode('/', $route);
-                
-                if (!in_array($matches[0], $stripRoutePath)) {
-                    throw new InvalidArgumentException('Value not found');
-                }
 
                 $indexParamArray = array_search($matches[0], $stripRoutePath);
-                if (!isset($firstSegment[$indexParamArray])) {
-                    throw new InvalidArgumentException('Value not found');
-                }
+                $diff = array_diff($firstSegment, $stripRoutePath);
+             
+                if (count($diff) == 1) {
+                    $index = array_key_first($diff);
+                    if ($index === $indexParamArray) {
+                        $this->valueUriParam =  $firstSegment[$indexParamArray];
                 
-                $this->valueUriParam =  $firstSegment[$indexParamArray];
-                // Replace il valore nella posizione estratta dell'array con $valueUriParam
-                $firstSegment[$indexParamArray] = $this->valueUriParam;
-                // confronta l'uri con il path restituito dagli attributi
-                $pathRoute = implode('/', $firstSegment);
-                
-                if ($this->uri() === $pathRoute) {
-                    $this->invokeMethodWithArguments($matches[0], $method);
+                        // Replace il valore nella posizione estratta dell'array con $valueUriParam
+                        $firstSegment[$indexParamArray] = $this->valueUriParam;
+                        
+                        // confronta l'uri con il path restituito dagli attributi
+                        $pathRoute = implode('/', $firstSegment);
+                        $param = trim($matches[0], '{}');
+                    
+                        return ['path' => $pathRoute, 'param' => $param, 'method' => $method];
+                    }
                 }
             } 
         } catch(InvalidArgumentException $exc) {
@@ -106,13 +129,12 @@ class Router
         }
     } 
 
-    protected function invokeMethodWithArguments(string $matches, string $method): void
+    protected function invokeMethodWithArguments(string $param, string $method)
     {
         try {
-            $param = trim($matches[0], '{}');
             // viene invocata l'istanza dell'oggetto e restituisce il valore del metodo invocato
             $reflectionMethod = new ReflectionMethod($this->getClassName(), $method);
-
+            
             foreach ($reflectionMethod->getParameters() as $param) {
                 $type = $param->getType();
                 if (! $type instanceof ReflectionNamedType) {
@@ -126,8 +148,9 @@ class Router
                 }
             }
 
-            $refClassString = $this->getClassName();
-            $reflectionMethod->invokeArgs(new $refClassString, array($this->valueUriParam));
+            $instance = $this->container->get($this->getClassName());
+           
+            return $reflectionMethod->invokeArgs($instance, array($this->valueUriParam));
         } catch (ReflectionException $ref) {
             print($ref->getMessage());
         } catch (InvalidArgumentException $exc) {

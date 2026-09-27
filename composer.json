@@ -3,7 +3,11 @@
     "description": "Invoices software",
     "type": "project",
     "require": {
-        "composer/composer": "^2.10"
+        "composer/composer": "^2.10",
+        "psr/container": "^2.0",
+        "psr/http-message": "^2.0",
+        "psr/http-server-middleware": "^1.0",
+        "psr/http-server-handler": "^1.0"
     },
     "autoload": {
         "psr-4": {

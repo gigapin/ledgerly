@@ -7,6 +7,8 @@ use Ledgerly\Infrastructure\Route;
 
 class UserController
 {
+    public string $role = "admin";
+    
     #[Route('/user', name: 'users.index')]
     public function index()
     {
@@ -17,5 +19,11 @@ class UserController
     public function getAvatar(string $user)
     {
         echo "The avatar is called $user";
+    }
+
+    #[Route('/user/show/{id}', name: 'users.show')]
+    public function show(string $id)
+    { 
+        echo "User $id";
     }
 }
